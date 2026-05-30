@@ -1,6 +1,6 @@
 require("dotenv").config();
 const { Client, GatewayIntentBits, Partials, ActivityType } = require("discord.js");
-const Anthropic = require("@anthropic-ai/sdk");
+const Groq = require("groq-sdk");
 
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 const BOT_NAME = process.env.BOT_NAME || "Talang AI";
@@ -22,14 +22,14 @@ const discord = new Client({
   partials: [Partials.Channel, Partials.Message],
 });
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
 });
 
 // ─── MEMORY (per channel conversation history) ───────────────────────────────
-const conversationHistory = new Map(); // channelId -> [{role, content}]
-const MAX_HISTORY = 20; // simpan 20 pesan terakhir per channel
-const typingUsers = new Set(); // track siapa lagi ngetik biar ga double reply
+const conversationHistory = new Map();
+const MAX_HISTORY = 20;
+const typingUsers = new Set();
 
 // ─── SYSTEM PROMPT ───────────────────────────────────────────────────────────
 function getSystemPrompt(guildName, userName) {
@@ -73,7 +73,6 @@ function getHistory(channelId) {
 function addToHistory(channelId, role, content) {
   const history = getHistory(channelId);
   history.push({ role, content });
-  // Trim ke MAX_HISTORY (jaga memori)
   if (history.length > MAX_HISTORY) {
     history.splice(0, history.length - MAX_HISTORY);
   }
@@ -81,7 +80,6 @@ function addToHistory(channelId, role, content) {
 
 // ─── HELPER: simulate human typing delay ─────────────────────────────────────
 function humanDelay(text) {
-  // Makin panjang text, makin lama "ngetik" — mirip manusia
   const baseDelay = 800;
   const perCharDelay = 30;
   const maxDelay = 4000;
@@ -91,23 +89,19 @@ function humanDelay(text) {
 
 // ─── HELPER: should bot reply? ────────────────────────────────────────────────
 function shouldReply(message, botId) {
-  // Skip pesan dari bot lain
   if (message.author.bot) return false;
 
-  // Cek allowed channels
   if (ALLOWED_CHANNELS.length > 0 && !ALLOWED_CHANNELS.includes(message.channelId)) {
     return false;
   }
 
   const isMentioned = message.mentions.has(botId);
-  const content = message.content.trim();
 
   if (RESPONSE_MODE === "mention") return isMentioned;
   if (RESPONSE_MODE === "all") return true;
 
-  // "both" mode: balas kalau di-mention, atau kalau chat di DM
   if (isMentioned) return true;
-  if (message.guild === null) return true; // DM selalu dibalas
+  if (message.guild === null) return true;
 
   return false;
 }
@@ -125,33 +119,30 @@ async function generateReply(message, cleanText) {
   const guildName = message.guild?.name || "DM";
   const userName = message.member?.displayName || message.author.username;
 
-  // Tambah pesan user ke history
   addToHistory(channelId, "user", `${userName}: ${cleanText}`);
 
   const history = getHistory(channelId);
 
   try {
-    const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-20250514",
+    const response = await groq.chat.completions.create({
+      model: "llama-3.1-8b-instant", // limit lebih tinggi, cocok server ramai
       max_tokens: 500,
-      system: getSystemPrompt(guildName, userName),
-      messages: history.map((h) => ({
-        role: h.role,
-        content: h.content,
-      })),
+      messages: [
+        { role: "system", content: getSystemPrompt(guildName, userName) },
+        ...history.map((h) => ({ role: h.role, content: h.content })),
+      ],
     });
 
-    const reply = response.content[0]?.text || "eh sori, gue lagi error sebentar 😅";
+    const reply = response.choices[0]?.message?.content || "eh sori, gue lagi error sebentar 😅";
 
-    // Tambah reply ke history
     addToHistory(channelId, "assistant", reply);
 
     return reply;
   } catch (err) {
-    console.error("❌ Error dari Anthropic API:", err.message);
+    console.error("❌ Error dari Groq API:", err.message);
 
     if (err.status === 401) {
-      return "hmm kayaknya ada masalah sama API key nih...";
+      return "hmm ada masalah sama API key nih...";
     } else if (err.status === 429) {
       return "wah gue lagi overload dikit, coba lagi bentar ya 😅";
     }
@@ -185,19 +176,17 @@ async function handleCommand(message) {
       break;
 
     default:
-      // Bukan command yang dikenal, lewatin
       break;
   }
 }
 
 // ─── EVENT: READY ─────────────────────────────────────────────────────────────
-discord.once("ready", () => {
+discord.once("clientReady", () => {
   console.log(`\n✅ ${BOT_NAME} online sebagai: ${discord.user.tag}`);
   console.log(`📡 Mode: ${RESPONSE_MODE}`);
   console.log(`🔑 Prefix: ${BOT_PREFIX}`);
   console.log(`📢 Channel filter: ${ALLOWED_CHANNELS.length > 0 ? ALLOWED_CHANNELS.join(", ") : "semua channel"}\n`);
 
-  // Set status bot
   discord.user.setPresence({
     activities: [
       {
@@ -211,36 +200,29 @@ discord.once("ready", () => {
 
 // ─── EVENT: MESSAGE CREATE ────────────────────────────────────────────────────
 discord.on("messageCreate", async (message) => {
-  // Handle commands dulu
   if (message.content.startsWith(BOT_PREFIX) && !message.author.bot) {
     await handleCommand(message);
     return;
   }
 
-  // Cek apakah perlu dibalas
   if (!shouldReply(message, discord.user.id)) return;
 
   const cleanText = cleanContent(message.content, discord.user.id);
 
-  // Skip kalau pesan kosong setelah dibersihkan
   if (!cleanText || cleanText.length === 0) {
     await message.reply("eh? lo ngomong apa? 😄");
     return;
   }
 
-  // Anti spam: skip kalau bot lagi proses pesan dari channel ini
   if (typingUsers.has(message.channelId)) return;
   typingUsers.add(message.channelId);
 
   try {
-    // Generate reply dulu biar delay-nya akurat
     const reply = await generateReply(message, cleanText);
 
-    // Simulasi "sedang mengetik..."
     await message.channel.sendTyping();
     await humanDelay(reply);
 
-    // Kirim balasan
     await message.reply(reply);
 
     console.log(`[${message.guild?.name || "DM"}] ${message.author.username}: ${cleanText}`);
@@ -266,8 +248,8 @@ if (!process.env.DISCORD_TOKEN) {
   console.error("❌ DISCORD_TOKEN tidak ditemukan di .env!");
   process.exit(1);
 }
-if (!process.env.ANTHROPIC_API_KEY) {
-  console.error("❌ ANTHROPIC_API_KEY tidak ditemukan di .env!");
+if (!process.env.GROQ_API_KEY) {
+  console.error("❌ GROQ_API_KEY tidak ditemukan di .env!");
   process.exit(1);
 }
 
