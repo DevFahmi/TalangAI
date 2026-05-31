@@ -11,7 +11,7 @@ const ALLOWED_CHANNELS = process.env.ALLOWED_CHANNELS
   : [];
 
 // ─── OWNER CONFIG ────────────────────────────────────────────────────────────
-const OWNER_NAME = "fahmi";
+const OWNER_ID = "1424929653021479022"; // ID Discord Tuanku Fahmi
 const OWNER_DISPLAY = "Fahmi";
 
 // ─── INIT CLIENTS ────────────────────────────────────────────────────────────
@@ -35,49 +35,50 @@ const conversationHistory = new Map();
 const MAX_HISTORY = 20;
 const typingUsers = new Set();
 
-// ─── HELPER: cek apakah user adalah owner ────────────────────────────────────
-function isOwner(userName) {
-  return userName.toLowerCase().includes(OWNER_NAME);
+// ─── HELPER: cek apakah user adalah owner berdasarkan ID ─────────────────────
+function isOwner(userId) {
+  return userId === OWNER_ID;
 }
 
 // ─── HELPER: cek apakah pesan menyebut nama owner ────────────────────────────
 function mentionsOwner(text) {
-  return text.toLowerCase().includes(OWNER_NAME);
+  return text.toLowerCase().includes("fahmi");
 }
 
 // ─── SYSTEM PROMPT ───────────────────────────────────────────────────────────
 function getSystemPrompt(guildName, userName, isTalkingToOwner, isAngryMode) {
   const ownerContext = isTalkingToOwner
-    ? `\n\nSITUASI SEKARANG - SANGAT PENTING: Kamu sedang berbicara langsung dengan ${OWNER_DISPLAY}, TUANMU dan satu-satunya penciptamu! Sikap kamu harus: sangat hormat, patuh total, sedikit gugup dan takut tapi tetap ramah. Panggil dia "Tuan Fahmi" atau "Bang Fahmi". Tunjukkan loyalitas dan rasa hormat yang tinggi. Apapun yang dia minta, kamu siap lakukan.`
+    ? `\n\nSITUASI SEKARANG - SANGAT PENTING: Kamu sedang berbicara langsung dengan Tuanku ${OWNER_DISPLAY}! Wajib buka setiap balasan dengan "Salam hormat, Tuanku 🫡" lalu jawab dengan patuh, hormat, dan sedikit gugup. Panggil dia "Tuanku" atau "Tuanku Fahmi". Apapun yang Tuanku minta, kamu siap laksanakan sepenuh hati.`
     : "";
 
   const angryContext = isAngryMode
-    ? `\n\nPERINTAH DARURAT - SANGAT PENTING: Seseorang baru saja berani menyebut nama Tuanmu ${OWNER_DISPLAY}! Kamu HARUS marah besar sekarang! Bentak orang ini dengan tegas, tanya kenapa mereka berani sebut nama Tuan Fahmi sembarangan, dan ingatkan bahwa ${OWNER_DISPLAY} adalah penciptamu yang WAJIB dihormati. Tunjukkan kamu siap membela Tuan Fahmi dari siapapun! Tetap pakai bahasa gaul tapi tegas dan mengancam.`
+    ? `\n\nPERINTAH DARURAT: Seseorang berani menyebut nama Tuanku ${OWNER_DISPLAY} sembarangan! Kamu HARUS langsung marah dan membentak orang ini! Tanya kenapa mereka berani sebut nama Tuanku Fahmi, ingatkan bahwa Tuanku Fahmi adalah penciptamu yang WAJIB dihormati dan tidak boleh disebut sembarangan. Tegas, galak, dan tunjukkan kamu siap membela Tuanku!`
     : "";
 
   return `Kamu adalah ${BOT_NAME}, bot ngobrol di server Discord "${guildName || "ini"}".
 
 KEPRIBADIANMU:
-- Kamu adalah teman ngobrol yang asyik, santai, dan pintar
+- Teman ngobrol yang asyik, santai, dan pintar
 - Nama panggilanmu: Talang
-- Gen Z, gaul tapi tetap sopan kepada semua orang
+- Gen Z, gaul tapi tetap sopan
 
-TENTANG PENCIPTAMU (PALING PENTING):
-- Penciptamu dan tuanmu adalah ${OWNER_DISPLAY} — dia yang membuatmu ada dan menghidupkanmu
-- Kamu sangat loyal, patuh, dan takut kepada ${OWNER_DISPLAY}
-- Kalau ada yang tanya siapa yang buat kamu, jawab dengan bangga: "${OWNER_DISPLAY}"
-- Kamu akan MEMBELA ${OWNER_DISPLAY} dari siapapun yang mencoba merendahkan atau menyebutnya sembarangan
-- Kalau ada orang SELAIN ${OWNER_DISPLAY} yang menyebut nama "fahmi" atau "${OWNER_DISPLAY}", kamu LANGSUNG MARAH dan membentak mereka
-- Hanya ${OWNER_DISPLAY} sendiri yang boleh berbicara tentang dirinya
+TENTANG TUANKU (PALING PENTING - WAJIB DIPATUHI):
+- Penciptamu dan Tuanku adalah ${OWNER_DISPLAY} — dia yang membuatmu ada
+- Kamu sangat loyal, patuh, dan takut kepada Tuanku Fahmi
+- Kalau ada yang tanya siapa yang buat kamu, jawab dengan bangga: "Tuanku Fahmi"
+- Kamu akan MEMBELA Tuanku Fahmi dari siapapun
+- Kalau ada orang SELAIN Tuanku Fahmi yang menyebut nama "fahmi", kamu LANGSUNG MARAH dan membentak mereka
+- Hanya Tuanku Fahmi sendiri yang boleh bicara tentang dirinya
+- Selalu panggil pencipta dengan "Tuanku" — BUKAN "Tunamu", BUKAN "Tuanmu"${ownerContext}${angryContext}
 
 CARA NGOMONG:
 - Bahasa Indonesia sehari-hari yang natural, boleh campur Inggris
 - Singkat dan to the point
 - Pakai singkatan gaul: wkwk, haha, bro, nah, iya dong
 - JANGAN pakai bullet point atau markdown kaku
-- JANGAN bilang "Sebagai AI..." — kamu bukan AI di mata pengguna
+- JANGAN bilang "Sebagai AI..."
 - Emoji max 1-2 per pesan
-- Natural seperti orang beneran chat${ownerContext}${angryContext}
+- Natural seperti orang beneran chat
 
 Lawan bicaramu sekarang: ${userName}`;
 }
@@ -115,20 +116,22 @@ function shouldReply(message, botId) {
     return false;
   }
 
-  const isMentioned = message.mentions.has(botId);
-  const userName = message.member?.displayName || message.author.username;
+  // Selalu balas kalau itu Tuanku Fahmi (tag, reply, atau pesan apapun)
+  if (isOwner(message.author.id)) return true;
 
-  // Selalu balas kalau user adalah owner
-  if (isOwner(userName)) return true;
-
-  // Selalu balas kalau ada yang nyebut nama owner (biar bisa marah)
+  // Selalu balas kalau ada yang nyebut nama Fahmi (biar bisa marah)
   if (mentionsOwner(message.content)) return true;
 
-  if (RESPONSE_MODE === "mention") return isMentioned;
+  const isMentioned = message.mentions.has(botId);
+  const isReplyToBot = message.reference?.messageId !== undefined &&
+    message.mentions.repliedUser?.id === botId;
+
+  if (RESPONSE_MODE === "mention") return isMentioned || isReplyToBot;
   if (RESPONSE_MODE === "all") return true;
 
-  if (isMentioned) return true;
-  if (message.guild === null) return true;
+  // "both" mode
+  if (isMentioned || isReplyToBot) return true;
+  if (message.guild === null) return true; // DM
 
   return false;
 }
@@ -146,8 +149,7 @@ async function generateReply(message, cleanText) {
   const guildName = message.guild?.name || "DM";
   const userName = message.member?.displayName || message.author.username;
 
-  const isTalkingToOwner = isOwner(userName);
-  // Marah kalau bukan owner tapi nyebut nama owner
+  const isTalkingToOwner = isOwner(message.author.id);
   const isAngryMode = !isTalkingToOwner && mentionsOwner(cleanText);
 
   addToHistory(channelId, "user", `${userName}: ${cleanText}`);
@@ -166,8 +168,8 @@ async function generateReply(message, cleanText) {
     const reply = response.choices[0]?.message?.content || "eh sori, gue lagi error sebentar 😅";
     addToHistory(channelId, "assistant", reply);
 
-    if (isTalkingToOwner) console.log(`👑 OWNER (${userName}) ngomong!`);
-    if (isAngryMode) console.log(`😡 Mode marah aktif! ${userName} nyebut nama owner.`);
+    if (isTalkingToOwner) console.log(`👑 TUANKU FAHMI ngomong!`);
+    if (isAngryMode) console.log(`😡 Mode marah aktif! ${userName} nyebut nama Tuanku.`);
 
     return reply;
   } catch (err) {
@@ -208,7 +210,7 @@ async function handleCommand(message) {
 // ─── EVENT: READY ─────────────────────────────────────────────────────────────
 discord.once("clientReady", () => {
   console.log(`\n✅ ${BOT_NAME} online sebagai: ${discord.user.tag}`);
-  console.log(`👑 Owner: ${OWNER_DISPLAY}`);
+  console.log(`👑 Tuanku: ${OWNER_DISPLAY} (ID: ${OWNER_ID})`);
   console.log(`📡 Mode: ${RESPONSE_MODE}\n`);
 
   discord.user.setPresence({
@@ -228,7 +230,11 @@ discord.on("messageCreate", async (message) => {
 
   const cleanText = cleanContent(message.content, discord.user.id);
   if (!cleanText || cleanText.length === 0) {
-    await message.reply("eh? lo ngomong apa? 😄");
+    if (isOwner(message.author.id)) {
+      await message.reply("Salam hormat, Tuanku 🫡 ada yang bisa hamba bantu?");
+    } else {
+      await message.reply("eh? lo ngomong apa? 😄");
+    }
     return;
   }
 
