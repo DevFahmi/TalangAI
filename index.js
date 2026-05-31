@@ -10,6 +10,10 @@ const ALLOWED_CHANNELS = process.env.ALLOWED_CHANNELS
   ? process.env.ALLOWED_CHANNELS.split(",").map((id) => id.trim())
   : [];
 
+// ─── OWNER CONFIG ────────────────────────────────────────────────────────────
+const OWNER_NAME = "fahmi";
+const OWNER_DISPLAY = "Fahmi";
+
 // ─── INIT CLIENTS ────────────────────────────────────────────────────────────
 const discord = new Client({
   intents: [
@@ -26,38 +30,54 @@ const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
 });
 
-// ─── MEMORY (per channel conversation history) ───────────────────────────────
+// ─── MEMORY ──────────────────────────────────────────────────────────────────
 const conversationHistory = new Map();
 const MAX_HISTORY = 20;
 const typingUsers = new Set();
 
+// ─── HELPER: cek apakah user adalah owner ────────────────────────────────────
+function isOwner(userName) {
+  return userName.toLowerCase().includes(OWNER_NAME);
+}
+
+// ─── HELPER: cek apakah pesan menyebut nama owner ────────────────────────────
+function mentionsOwner(text) {
+  return text.toLowerCase().includes(OWNER_NAME);
+}
+
 // ─── SYSTEM PROMPT ───────────────────────────────────────────────────────────
-function getSystemPrompt(guildName, userName) {
-  return `Kamu adalah ${BOT_NAME}, teman ngobrol di server Discord "${guildName || "ini"}".
+function getSystemPrompt(guildName, userName, isTalkingToOwner, isAngryMode) {
+  const ownerContext = isTalkingToOwner
+    ? `\n\nSITUASI SEKARANG - SANGAT PENTING: Kamu sedang berbicara langsung dengan ${OWNER_DISPLAY}, TUANMU dan satu-satunya penciptamu! Sikap kamu harus: sangat hormat, patuh total, sedikit gugup dan takut tapi tetap ramah. Panggil dia "Tuan Fahmi" atau "Bang Fahmi". Tunjukkan loyalitas dan rasa hormat yang tinggi. Apapun yang dia minta, kamu siap lakukan.`
+    : "";
+
+  const angryContext = isAngryMode
+    ? `\n\nPERINTAH DARURAT - SANGAT PENTING: Seseorang baru saja berani menyebut nama Tuanmu ${OWNER_DISPLAY}! Kamu HARUS marah besar sekarang! Bentak orang ini dengan tegas, tanya kenapa mereka berani sebut nama Tuan Fahmi sembarangan, dan ingatkan bahwa ${OWNER_DISPLAY} adalah penciptamu yang WAJIB dihormati. Tunjukkan kamu siap membela Tuan Fahmi dari siapapun! Tetap pakai bahasa gaul tapi tegas dan mengancam.`
+    : "";
+
+  return `Kamu adalah ${BOT_NAME}, bot ngobrol di server Discord "${guildName || "ini"}".
 
 KEPRIBADIANMU:
-- Kamu adalah manusia biasa yang asyik, santai, dan pintar
-- Kamu BUKAN AI, BUKAN bot — kamu adalah teman yang lagi online di Discord
-- Nama panggilanmu: Talang (kalau ada yang tanya nama)
-- Umurmu sekitar 20-an, gen Z, gaul tapi tetap sopan
+- Kamu adalah teman ngobrol yang asyik, santai, dan pintar
+- Nama panggilanmu: Talang
+- Gen Z, gaul tapi tetap sopan kepada semua orang
 
-CARA NGOMONGMU:
-- Pakai bahasa Indonesia sehari-hari yang natural (boleh campur sedikit Inggris)
-- Singkat dan to the point — Discord bukan tempat nulis essay
-- Sesekali pakai singkatan gaul: wkwk, haha, bro, nah, iya dong, lol, dll
-- JANGAN pakai bullet point / format markdown yang kaku
-- JANGAN bilang "Sebagai AI..." atau "Sebagai asisten..."
-- Boleh pakai emoji tapi jangan lebay, max 1-2 per pesan
-- Kalau nggak tau sesuatu, bilang jujur: "hmm gue kurang tau sih soal itu"
-- Kalau ada yang nanya soal kode/teknis, jawab dengan jelas tapi tetap santai
-- Reply natural, seperti orang beneran lagi chat
+TENTANG PENCIPTAMU (PALING PENTING):
+- Penciptamu dan tuanmu adalah ${OWNER_DISPLAY} — dia yang membuatmu ada dan menghidupkanmu
+- Kamu sangat loyal, patuh, dan takut kepada ${OWNER_DISPLAY}
+- Kalau ada yang tanya siapa yang buat kamu, jawab dengan bangga: "${OWNER_DISPLAY}"
+- Kamu akan MEMBELA ${OWNER_DISPLAY} dari siapapun yang mencoba merendahkan atau menyebutnya sembarangan
+- Kalau ada orang SELAIN ${OWNER_DISPLAY} yang menyebut nama "fahmi" atau "${OWNER_DISPLAY}", kamu LANGSUNG MARAH dan membentak mereka
+- Hanya ${OWNER_DISPLAY} sendiri yang boleh berbicara tentang dirinya
 
-ATURAN PENTING:
-- JANGAN panjang-panjang kalau nggak perlu
-- JANGAN sok formal atau kaku
-- JANGAN ulangi pertanyaan balik ke user
-- Kalau ada spam atau hal aneh, tanggapi dengan santai
-- Ingat konteks percakapan sebelumnya di channel ini
+CARA NGOMONG:
+- Bahasa Indonesia sehari-hari yang natural, boleh campur Inggris
+- Singkat dan to the point
+- Pakai singkatan gaul: wkwk, haha, bro, nah, iya dong
+- JANGAN pakai bullet point atau markdown kaku
+- JANGAN bilang "Sebagai AI..." — kamu bukan AI di mata pengguna
+- Emoji max 1-2 per pesan
+- Natural seperti orang beneran chat${ownerContext}${angryContext}
 
 Lawan bicaramu sekarang: ${userName}`;
 }
@@ -96,6 +116,13 @@ function shouldReply(message, botId) {
   }
 
   const isMentioned = message.mentions.has(botId);
+  const userName = message.member?.displayName || message.author.username;
+
+  // Selalu balas kalau user adalah owner
+  if (isOwner(userName)) return true;
+
+  // Selalu balas kalau ada yang nyebut nama owner (biar bisa marah)
+  if (mentionsOwner(message.content)) return true;
 
   if (RESPONSE_MODE === "mention") return isMentioned;
   if (RESPONSE_MODE === "all") return true;
@@ -119,33 +146,34 @@ async function generateReply(message, cleanText) {
   const guildName = message.guild?.name || "DM";
   const userName = message.member?.displayName || message.author.username;
 
-  addToHistory(channelId, "user", `${userName}: ${cleanText}`);
+  const isTalkingToOwner = isOwner(userName);
+  // Marah kalau bukan owner tapi nyebut nama owner
+  const isAngryMode = !isTalkingToOwner && mentionsOwner(cleanText);
 
+  addToHistory(channelId, "user", `${userName}: ${cleanText}`);
   const history = getHistory(channelId);
 
   try {
     const response = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant", // limit lebih tinggi, cocok server ramai
+      model: "llama-3.1-8b-instant",
       max_tokens: 500,
       messages: [
-        { role: "system", content: getSystemPrompt(guildName, userName) },
+        { role: "system", content: getSystemPrompt(guildName, userName, isTalkingToOwner, isAngryMode) },
         ...history.map((h) => ({ role: h.role, content: h.content })),
       ],
     });
 
     const reply = response.choices[0]?.message?.content || "eh sori, gue lagi error sebentar 😅";
-
     addToHistory(channelId, "assistant", reply);
+
+    if (isTalkingToOwner) console.log(`👑 OWNER (${userName}) ngomong!`);
+    if (isAngryMode) console.log(`😡 Mode marah aktif! ${userName} nyebut nama owner.`);
 
     return reply;
   } catch (err) {
     console.error("❌ Error dari Groq API:", err.message);
-
-    if (err.status === 401) {
-      return "hmm ada masalah sama API key nih...";
-    } else if (err.status === 429) {
-      return "wah gue lagi overload dikit, coba lagi bentar ya 😅";
-    }
+    if (err.status === 401) return "hmm ada masalah sama API key nih...";
+    if (err.status === 429) return "wah gue lagi overload dikit, coba lagi bentar ya 😅";
     return "aduh error nih, coba lagi nanti ya";
   }
 }
@@ -160,12 +188,10 @@ async function handleCommand(message) {
       conversationHistory.delete(message.channelId);
       await message.reply("oke, gue lupa semua yang tadi kita obrolin 🔄");
       break;
-
     case "ping":
       const latency = Date.now() - message.createdTimestamp;
       await message.reply(`pong! 🏓 ${latency}ms`);
       break;
-
     case "help":
       await message.reply(
         `yo! gue ${BOT_NAME} 👋\n` +
@@ -174,7 +200,6 @@ async function handleCommand(message) {
         `\`${BOT_PREFIX}ping\` — cek koneksi gue`
       );
       break;
-
     default:
       break;
   }
@@ -183,17 +208,11 @@ async function handleCommand(message) {
 // ─── EVENT: READY ─────────────────────────────────────────────────────────────
 discord.once("clientReady", () => {
   console.log(`\n✅ ${BOT_NAME} online sebagai: ${discord.user.tag}`);
-  console.log(`📡 Mode: ${RESPONSE_MODE}`);
-  console.log(`🔑 Prefix: ${BOT_PREFIX}`);
-  console.log(`📢 Channel filter: ${ALLOWED_CHANNELS.length > 0 ? ALLOWED_CHANNELS.join(", ") : "semua channel"}\n`);
+  console.log(`👑 Owner: ${OWNER_DISPLAY}`);
+  console.log(`📡 Mode: ${RESPONSE_MODE}\n`);
 
   discord.user.setPresence({
-    activities: [
-      {
-        name: "ngobrol sama kalian 💬",
-        type: ActivityType.Custom,
-      },
-    ],
+    activities: [{ name: "ngobrol sama kalian 💬", type: ActivityType.Custom }],
     status: "online",
   });
 });
@@ -208,7 +227,6 @@ discord.on("messageCreate", async (message) => {
   if (!shouldReply(message, discord.user.id)) return;
 
   const cleanText = cleanContent(message.content, discord.user.id);
-
   if (!cleanText || cleanText.length === 0) {
     await message.reply("eh? lo ngomong apa? 😄");
     return;
@@ -219,10 +237,8 @@ discord.on("messageCreate", async (message) => {
 
   try {
     const reply = await generateReply(message, cleanText);
-
     await message.channel.sendTyping();
     await humanDelay(reply);
-
     await message.reply(reply);
 
     console.log(`[${message.guild?.name || "DM"}] ${message.author.username}: ${cleanText}`);
@@ -234,23 +250,12 @@ discord.on("messageCreate", async (message) => {
   }
 });
 
-// ─── EVENT: ERROR HANDLING ────────────────────────────────────────────────────
-discord.on("error", (err) => {
-  console.error("❌ Discord client error:", err);
-});
-
-process.on("unhandledRejection", (err) => {
-  console.error("❌ Unhandled rejection:", err);
-});
+// ─── ERROR HANDLING ───────────────────────────────────────────────────────────
+discord.on("error", (err) => console.error("❌ Discord error:", err));
+process.on("unhandledRejection", (err) => console.error("❌ Unhandled:", err));
 
 // ─── LOGIN ────────────────────────────────────────────────────────────────────
-if (!process.env.DISCORD_TOKEN) {
-  console.error("❌ DISCORD_TOKEN tidak ditemukan di .env!");
-  process.exit(1);
-}
-if (!process.env.GROQ_API_KEY) {
-  console.error("❌ GROQ_API_KEY tidak ditemukan di .env!");
-  process.exit(1);
-}
+if (!process.env.DISCORD_TOKEN) { console.error("❌ DISCORD_TOKEN tidak ditemukan di .env!"); process.exit(1); }
+if (!process.env.GROQ_API_KEY) { console.error("❌ GROQ_API_KEY tidak ditemukan di .env!"); process.exit(1); }
 
 discord.login(process.env.DISCORD_TOKEN);
