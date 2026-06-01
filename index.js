@@ -11,8 +11,8 @@ const ALLOWED_CHANNELS = process.env.ALLOWED_CHANNELS
   : [];
 
 // ─── OWNER CONFIG ────────────────────────────────────────────────────────────
-const OWNER_ID = "1424929653021479022";
-const OWNER_DISPLAY = "Fahmi";
+const OWNER_ID = "1111";
+const OWNER_DISPLAY = "@";
 
 // ─── MULTI API KEY ROTATION ──────────────────────────────────────────────────
 const groqKeys = [];
